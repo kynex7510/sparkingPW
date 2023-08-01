@@ -116,15 +116,17 @@ inline std::uint32_t pwChecksum(std::span<std::uint8_t const> const buffer) {
   return checksum;
 }
 
-inline void pwCipher(std::span<std::uint8_t> buffer) {
-  MTRNG rng;
-
+inline std::uint32_t pwCipher(std::span<std::uint8_t> buffer) {
   auto const seed = readBits(buffer, 0, 32);
   std::uint32_t const seedData[] = {seed, seed * 2, seed * 3, seed * 4};
+
+  MTRNG rng;
   rng.seed(seedData);
 
   for (std::size_t i = 4; i < buffer.size(); ++i)
     buffer[i] ^= rng.generate();
+
+  return seed;
 }
 
 inline void pwEncode(std::string &out, std::span<std::uint8_t const> const in,

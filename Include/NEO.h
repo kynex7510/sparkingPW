@@ -42,6 +42,7 @@ public:
   constexpr static std::size_t MAX_ZITEMS = 7;
 
 protected:
+  std::uint32_t m_Seed;
   std::uint32_t m_ID;
   std::uint32_t m_ZItems[7];
   AILogic m_AILogic;
@@ -51,29 +52,34 @@ protected:
 
 public:
   CharacterData()
-      : m_ID(0), m_AILogic(AILogic::Balance), m_Target(0),
+      : m_Seed(0), m_ID(0), m_AILogic(AILogic::Balance), m_Target(0),
         m_Country(Country::Japan), m_PasswordType(0) {
     std::fill(m_ZItems, m_ZItems + MAX_ZITEMS, 0);
   }
 
-  static CharacterData deserialize(std::string_view const pw) {
+  static CharacterData deserialize(std::string_view const pw,
+                                   bool skipVerify = false) {
     CharacterData data;
     std::uint8_t buffer[24] = {};
 
     // Decode and decipher password.
     util::pwDecode(buffer, pw, TABLE);
-    util::pwCipher(buffer);
+    data.m_Seed = util::pwCipher(buffer);
 
     // Verify checksum.
-    auto const checksum = util::readBits(buffer, 119, 8);
-    if (checksum != util::pwChecksum(buffer))
-      return data;
+    if (!skipVerify) {
+      auto const checksum = util::readBits(buffer, 119, 8);
+      if (checksum != util::pwChecksum(buffer))
+        return {};
+    }
 
     // Verify signature.
-    for (std::size_t i = 0; i < 8; i++) {
-      auto const v = buffer[i] ^ buffer[i + 8];
-      if (v != buffer[16 + i])
-        return data;
+    if (!skipVerify) {
+      for (std::size_t i = 0; i < 8; i++) {
+        auto const v = buffer[i] ^ buffer[i + 8];
+        if (v != buffer[16 + i])
+          return {};
+      }
     }
 
     // Read data.
@@ -90,12 +96,12 @@ public:
     return data;
   }
 
-  std::string serialize(std::uint32_t seed = 0) const {
+  std::string serialize() const {
     std::string out(32, ' ');
     std::uint8_t buffer[24] = {};
 
     // Write data.
-    util::writeBits(buffer, 0, 32, seed);
+    util::writeBits(buffer, 0, 32, m_Seed);
     util::writeBits(buffer, 32, 8, m_ID);
 
     for (std::size_t i = 0; i < MAX_ZITEMS; ++i)
@@ -120,6 +126,9 @@ public:
 
     return out;
   }
+
+  std::uint32_t getSeed() const { return m_Seed; }
+  void setSeed(std::uint32_t seed) { m_Seed = seed; }
 
   std::uint32_t getID() const { return m_ID; }
   void setID(std::uint32_t id) { m_ID = id; }

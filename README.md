@@ -4,4 +4,4 @@
 
 Supported games:
 
-- [Sparking! NEO/Budokai Tenkaichi 2](Tables/NEO.md)
+- [Sparking! NEO/Budokai Tenkaichi 2](Docs/NEO.md)
