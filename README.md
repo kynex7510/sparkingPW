@@ -5,3 +5,4 @@
 Supported games:
 
 - [Sparking! NEO/Budokai Tenkaichi 2](Docs/NEO.md)
+- [Sparking! Meteor/Budokai Tenkaichi 3](Docs/Meteor.md)

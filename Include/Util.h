@@ -2,12 +2,16 @@
 #define _SPARKINGPW_UTIL_H
 
 #include <algorithm>
+#include <concepts>
 #include <cstdint>
 #include <span>
-#include <string_view>
 
 namespace sparking::util {
-class MTRNG {
+
+template <typename T>
+concept EnumType = std::is_enum_v<T>;
+
+class MT {
 protected:
   constexpr static std::size_t TWISTER_STATE_SIZE = 624;
 
@@ -15,13 +19,14 @@ protected:
   std::size_t m_Index;
 
 public:
-  MTRNG() : m_Index(0) {
+  MT() : m_Index(0) {
     std::fill(m_State, m_State + TWISTER_STATE_SIZE, 0);
     m_State[0] = 0x12BD6AA;
     m_Index = 1;
 
     for (std::size_t i = 1; i < TWISTER_STATE_SIZE; ++i) {
-      m_State[i] = (0x6C078965 * (m_State[i - 1] ^ (m_State[i - 1] >> 30)) + i);
+      m_State[i] = (0x6C078965 * (m_State[i - 1] ^ (m_State[i - 1] >> 30)) +
+                    static_cast<std::uint32_t>(i));
       m_State[i] &= 0xFFFFFFFF;
     }
   }
@@ -34,7 +39,7 @@ public:
       auto const last = m_State[stateIdx - 1];
       m_State[stateIdx] =
           (m_State[stateIdx] ^ ((last ^ (last >> 30)) * 0x19660D)) +
-          seedData[seedIdx] + seedIdx;
+          seedData[seedIdx] + static_cast<std::uint32_t>(seedIdx);
 
       if (++stateIdx >= TWISTER_STATE_SIZE) {
         stateIdx = 1;
@@ -48,7 +53,8 @@ public:
     for (std::size_t _ = 0; _ < TWISTER_STATE_SIZE - 1; ++_) {
       auto const last = m_State[stateIdx - 1];
       m_State[stateIdx] =
-          (m_State[stateIdx] ^ (0x5D588B65 * (last ^ (last >> 30)))) - stateIdx;
+          (m_State[stateIdx] ^ (0x5D588B65 * (last ^ (last >> 30)))) -
+          static_cast<std::uint32_t>(stateIdx);
 
       if (++stateIdx >= TWISTER_STATE_SIZE) {
         stateIdx = 1;
@@ -70,10 +76,10 @@ public:
   }
 };
 
-inline std::uint64_t readBit(std::span<std::uint8_t const> const buffer,
-                             std::size_t index) {
-  auto const delta = index % 8;
-  auto const idx = (index - delta) / 8;
+inline bool readBit(std::span<std::uint8_t const> const buffer,
+                    std::size_t offset) {
+  auto const delta = offset % 8;
+  auto const idx = (offset - delta) / 8;
 
   if (idx < buffer.size())
     return (buffer[idx] >> delta) & 1;
@@ -81,10 +87,10 @@ inline std::uint64_t readBit(std::span<std::uint8_t const> const buffer,
   return 0;
 }
 
-inline void writeBit(std::span<std::uint8_t> buffer, std::size_t index,
-                     std::uint32_t bit) {
-  auto const delta = index % 8;
-  auto const idx = (index - delta) / 8;
+inline void writeBit(std::span<std::uint8_t> buffer, std::size_t offset,
+                     bool bit) {
+  auto const delta = offset % 8;
+  auto const idx = (offset - delta) / 8;
 
   if (idx < buffer.size()) {
     if (bit)
@@ -94,77 +100,51 @@ inline void writeBit(std::span<std::uint8_t> buffer, std::size_t index,
   }
 }
 
-inline std::uint64_t readBits(std::span<std::uint8_t const> const buffer,
-                              std::size_t offset, std::size_t size) {
-  std::uint64_t x = 0;
-  for (std::size_t i = 0; i < size; i++)
-    x |= readBit(buffer, offset + i) << i;
+template <std::integral T, std::size_t SIZE = sizeof(T) * 8>
+inline T readBits(std::span<std::uint8_t const> const buffer,
+                  std::size_t offset) {
+  T x = 0;
+
+  static_assert(SIZE <= sizeof(T) * 8, "Destination type is too small!");
+
+  for (std::size_t i = 0; i < SIZE; i++) {
+    if (readBit(buffer, offset + i))
+      x |= (1 << i);
+  }
 
   return x;
 }
 
+template <EnumType T, std::size_t SIZE = sizeof(T) * 8>
+inline T readBits(std::span<std::uint8_t const> const buffer,
+                  std::size_t offset) {
+  return static_cast<T>(readBits<std::uint32_t, SIZE>(buffer, offset));
+}
+
+template <std::integral T, std::size_t SIZE = sizeof(T) * 8>
 inline void writeBits(std::span<std::uint8_t> buffer, std::size_t offset,
-                      std::size_t size, std::uint64_t value) {
-  for (std::size_t i = 0; i < size; i++)
+                      T value) {
+  static_assert(SIZE <= sizeof(T) * 8, "Source type is too small!");
+
+  for (std::size_t i = 0; i < SIZE; i++)
     writeBit(buffer, offset + i, value >> i & 1);
 }
 
-inline std::uint32_t pwChecksum(std::span<std::uint8_t const> const buffer) {
-  std::uint32_t checksum = 0;
-  for (auto i = 0u; i < 119; ++i)
-    checksum += readBit(buffer, i);
-  return checksum;
+template <EnumType T, std::size_t SIZE = sizeof(T) * 8>
+inline void writeBits(std::span<std::uint8_t> buffer, std::size_t offset,
+                      T value) {
+  writeBits<std::uint32_t, SIZE>(buffer, offset,
+                                 static_cast<std::uint32_t>(value));
 }
 
-inline std::uint32_t pwCipher(std::span<std::uint8_t> buffer) {
-  auto const seed = readBits(buffer, 0, 32);
+inline void cipher(std::span<std::uint8_t> buffer, std::size_t offset,
+                   std::uint32_t seed) {
+  MT rng;
   std::uint32_t const seedData[] = {seed, seed * 2, seed * 3, seed * 4};
-
-  MTRNG rng;
   rng.seed(seedData);
 
-  for (std::size_t i = 4; i < buffer.size(); ++i)
+  for (std::size_t i = offset; i < buffer.size(); ++i)
     buffer[i] ^= rng.generate();
-
-  return seed;
-}
-
-inline void pwEncode(std::string &out, std::span<std::uint8_t const> const in,
-                     std::string_view const dict) {
-  std::size_t outIdx = 0;
-
-  if ((!(in.size() % 3)) && out.size() >= (in.size() * 4 / 3)) {
-    for (std::size_t i = 0; i < in.size(); i += 3) {
-      auto const b0 = in[i];
-      auto const b1 = in[i + 1];
-      auto const b2 = in[i + 2];
-
-      out[outIdx] = dict[b0 & 0x3F];
-      out[outIdx + 1] = dict[((b0 >> 6) & 0x03) | ((b1 & 0x0F) << 2)];
-      out[outIdx + 2] = dict[((b1 >> 4) & 0x0F) | (b2 & 0x03) << 4];
-      out[outIdx + 3] = dict[b2 >> 2];
-      outIdx += 4;
-    }
-  }
-}
-
-inline void pwDecode(std::span<std::uint8_t> out, std::string_view const in,
-                     std::span<std::size_t const> const table) {
-  std::size_t outIdx = 0;
-
-  if ((!(in.size() % 4)) && out.size() >= (in.size() * 3 / 4)) {
-    for (std::size_t i = 0; i < in.size(); i += 4) {
-      auto const chunk0 = table[in[i] & 0x7F];
-      auto const chunk1 = table[in[i + 1] & 0x7F];
-      auto const chunk2 = table[in[i + 2] & 0x7F];
-      auto const chunk3 = table[in[i + 3] & 0x7F];
-
-      out[outIdx] = chunk0 | (chunk1 << 6);
-      out[outIdx + 1] = (chunk1 >> 2) | (chunk2 << 4);
-      out[outIdx + 2] = (chunk2 >> 4) | (chunk3 << 2);
-      outIdx += 3;
-    }
-  }
 }
 
 } // namespace sparking::util
